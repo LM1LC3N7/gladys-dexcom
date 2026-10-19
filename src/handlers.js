@@ -19,7 +19,7 @@ export function registerHandlers(gladys, app, logger) {
   gladys.onAction(ACTIONS.TEST, () => app.testConnection());
 
   // --- Configuration saved by the user: other credentials are tried at once;
-  // the same ones once per series of stops (refusals, account locked).
+  // the same ones once per step of a stop (refusals, account locked).
   gladys.onConfigUpdated((config) => {
     logger?.info('Configuration updated: restarting');
     return app.start(config, { force: true });

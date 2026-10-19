@@ -163,7 +163,7 @@ connexion de l’intégration.
   redémarrage, une reconnexion de Gladys et le bouton de test attendent
   aussi. Un essai encore en cours quand l’intégration s’arrête compte
   comme un refus. Enregistrer la configuration avec les mêmes identifiants
-  fait **un** essai tout de suite par série de refus ; d’autres
+  fait **un** essai tout de suite par palier de l’arrêt ; d’autres
   identifiants ou une autre région sont essayés tout de suite. Une lecture
   qui marche oublie les refus.
 - **Compte bloqué par Dexcom** (trop d’essais) : même arrêt de 1 heure,

@@ -126,8 +126,8 @@
       "key": "test_connection",
       "label": { "en": "Test the connection", "fr": "Tester la connexion" },
       "description": {
-        "en": "Reads Dexcom Share again and says whether the latest measurement is current; read less than 5 minutes ago, it reads nothing and says when the next reading is. After a refusal of the credentials, this button waits for the end of the stop; saving the configuration tries the same credentials again once per series of refusals (other credentials or another region at once; for an account locked by Dexcom, one attempt per step whatever the password).",
-        "fr": "Relit Dexcom Share et indique si la dernière mesure est à jour ; lu il y a moins de 5 minutes, il ne relit rien et indique quand vient la prochaine lecture. Après un refus des identifiants, ce bouton attend la fin de l’arrêt ; enregistrer la configuration réessaie les mêmes identifiants une fois par série de refus (d’autres identifiants ou une autre région tout de suite ; pour un compte bloqué par Dexcom, un essai par palier quel que soit le mot de passe)."
+        "en": "Reads Dexcom Share again and says whether the latest measurement is current; read less than 5 minutes ago, it reads nothing and says when the next reading is. After a refusal of the credentials, this button waits for the end of the stop; saving the configuration tries the same credentials again once per step of the stop (other credentials or another region at once; for an account locked by Dexcom, one attempt per step whatever the password).",
+        "fr": "Relit Dexcom Share et indique si la dernière mesure est à jour ; lu il y a moins de 5 minutes, il ne relit rien et indique quand vient la prochaine lecture. Après un refus des identifiants, ce bouton attend la fin de l’arrêt ; enregistrer la configuration réessaie les mêmes identifiants une fois par palier de l’arrêt (d’autres identifiants ou une autre région tout de suite ; pour un compte bloqué par Dexcom, un essai par palier quel que soit le mot de passe)."
       },
       "timeout_seconds": 60
     }

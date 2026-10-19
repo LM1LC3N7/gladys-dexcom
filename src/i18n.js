@@ -45,6 +45,18 @@ export function reasonOf(err) {
 const agoText = (ms) =>
   ms < 60_000 ? { en: 'less than 1 min', fr: 'moins d’1 min' } : delayText(ms);
 
+/** Who may try at once during a stop: a lock is about the account, whatever the password. */
+const OTHERS = (locked) =>
+  locked
+    ? {
+        en: 'another password waits for the next step; another region or another account: at once',
+        fr: 'un autre mot de passe attend le palier suivant ; une autre région ou un autre compte : tout de suite',
+      }
+    : {
+        en: 'other credentials or another region are tried at once',
+        fr: 'd’autres identifiants ou une autre région sont essayés tout de suite',
+      };
+
 const RETRY = (delay) => {
   const d = delayText(delay);
   return { en: `Retried in ${d.en}.`, fr: `Nouvel essai dans ${d.fr}.` };
@@ -106,22 +118,27 @@ export const T = {
     },
     refused: (delay) =>
       join({
-        en: `Dexcom refused the user name or the password, or the account is not in the chosen region. A wrong password tried again and again locks the account: Gladys stops for ${delayText(delay).en} (1 h, then 6 h, then 24 h). Check the credentials and the region, then save the configuration: it tries once per series of refusals (other credentials or another region: at once).`,
-        fr: `Dexcom a refusé le nom d’utilisateur ou le mot de passe, ou le compte n’est pas dans la région choisie. Un mauvais mot de passe essayé encore et encore bloque le compte : Gladys s’arrête ${delayText(delay).fr} (1 h, puis 6 h, puis 24 h). Vérifiez les identifiants et la région, puis enregistrez la configuration : elle fait un essai par série de refus (d’autres identifiants ou une autre région : tout de suite).`,
+        en: `Dexcom refused the user name or the password, or the account is not in the chosen region. A wrong password tried again and again locks the account: Gladys stops for ${delayText(delay).en} (1 h, then 6 h, then 24 h). Check the credentials and the region, then save the configuration: it tries once per step (other credentials or another region: at once).`,
+        fr: `Dexcom a refusé le nom d’utilisateur ou le mot de passe, ou le compte n’est pas dans la région choisie. Un mauvais mot de passe essayé encore et encore bloque le compte : Gladys s’arrête ${delayText(delay).fr} (1 h, puis 6 h, puis 24 h). Vérifiez les identifiants et la région, puis enregistrez la configuration : elle fait un essai par palier (d’autres identifiants ou une autre région : tout de suite).`,
       }),
     locked: (delay) =>
       join({
-        en: `Dexcom locked the account after too many attempts. Gladys stops for ${delayText(delay).en} (1 h, then 6 h, then 24 h) so as not to lock it longer. Check the password in the Dexcom app, then save the configuration (one attempt per series of stops).`,
-        fr: `Dexcom a bloqué le compte après trop d’essais. Gladys s’arrête ${delayText(delay).fr} (1 h, puis 6 h, puis 24 h) pour ne pas le bloquer plus longtemps. Vérifiez le mot de passe dans l’application Dexcom, puis enregistrez la configuration (un essai par série d’arrêts).`,
+        en: `Dexcom locked the account after too many attempts. Gladys stops for ${delayText(delay).en} (1 h, then 6 h, then 24 h) so as not to lock it longer. Check the password in the Dexcom app, then save the configuration (one attempt per step; another password waits for the next step; another region or another account: at once).`,
+        fr: `Dexcom a bloqué le compte après trop d’essais. Gladys s’arrête ${delayText(delay).fr} (1 h, puis 6 h, puis 24 h) pour ne pas le bloquer plus longtemps. Vérifiez le mot de passe dans l’application Dexcom, puis enregistrez la configuration (un essai par palier ; un autre mot de passe attend le palier suivant ; une autre région ou un autre compte : tout de suite).`,
       }),
     loginError: (delay) =>
       join({
-        en: `Dexcom answered the login with an error this integration does not know (it may be about the credentials). So as not to lock the account, Gladys stops for ${delayText(delay).en} (1 h, then 6 h, then 24 h). Check the credentials and the region in the Dexcom app, then save the configuration (one attempt per series of stops), or report it on the Gladys forum.`,
-        fr: `Dexcom a répondu à la connexion par une erreur que cette intégration ne connaît pas (elle peut venir des identifiants). Pour ne pas bloquer le compte, Gladys s’arrête ${delayText(delay).fr} (1 h, puis 6 h, puis 24 h). Vérifiez les identifiants et la région dans l’application Dexcom, puis enregistrez la configuration (un essai par série d’arrêts), ou signalez-le sur le forum Gladys.`,
+        en: `Dexcom answered the login with an error this integration does not know (it may be about the credentials). So as not to lock the account, Gladys stops for ${delayText(delay).en} (1 h, then 6 h, then 24 h). Check the credentials and the region in the Dexcom app, then save the configuration (one attempt per step), or report it on the Gladys forum.`,
+        fr: `Dexcom a répondu à la connexion par une erreur que cette intégration ne connaît pas (elle peut venir des identifiants). Pour ne pas bloquer le compte, Gladys s’arrête ${delayText(delay).fr} (1 h, puis 6 h, puis 24 h). Vérifiez les identifiants et la région dans l’application Dexcom, puis enregistrez la configuration (un essai par palier), ou signalez-le sur le forum Gladys.`,
       }),
     floor: (ago, next) => ({
       en: `Dexcom Share was read ${agoText(ago).en} ago (one reading every 5 minutes at most): next reading in ${delayText(next).en}.`,
       fr: `Dexcom Share a été lu il y a ${agoText(ago).fr} (une lecture toutes les 5 minutes au plus) : prochaine lecture dans ${delayText(next).fr}.`,
+    }),
+    /** A saved configuration whose attempt waits for the end of the floor. */
+    attemptWaits: (ago, next) => ({
+      en: `Configuration saved: Dexcom Share was read ${agoText(ago).en} ago (one reading every 5 minutes at most), so the attempt with it leaves in ${delayText(next).en}.`,
+      fr: `Configuration enregistrée : Dexcom Share a été lu il y a ${agoText(ago).fr} (une lecture toutes les 5 minutes au plus), l’essai avec elle part donc dans ${delayText(next).fr}.`,
     }),
     stillRefused: (delay, forced = false, locked = false) => {
       const what = locked
@@ -133,20 +150,24 @@ export const T = {
             en: 'Dexcom refused these credentials earlier',
             fr: 'Dexcom a refusé ces identifiants plus tôt',
           };
+      const others = OTHERS(locked);
       return forced
         ? {
-            en: `${what.en}, and they were already tried again: next attempt in ${delayText(delay).en} (other credentials or another region are tried at once).`,
-            fr: `${what.fr}, et ils ont déjà été réessayés : prochain essai dans ${delayText(delay).fr} (d’autres identifiants ou une autre région sont essayés tout de suite).`,
+            en: `${what.en}, and the attempt of this step was already made: next attempt in ${delayText(delay).en} (${others.en}).`,
+            fr: `${what.fr}, et l’essai de ce palier a déjà été fait : prochain essai dans ${delayText(delay).fr} (${others.fr}).`,
           }
         : {
-            en: `${what.en}: Gladys waits ${delayText(delay).en} before trying again (saving the configuration tries once at once).`,
-            fr: `${what.fr} : Gladys attend ${delayText(delay).fr} avant de réessayer (enregistrer la configuration fait un essai tout de suite).`,
+            en: `${what.en}: Gladys waits ${delayText(delay).en} before trying again (saving the configuration tries once at once; ${others.en}).`,
+            fr: `${what.fr} : Gladys attend ${delayText(delay).fr} avant de réessayer (enregistrer la configuration fait un essai tout de suite ; ${others.fr}).`,
           };
     },
-    alreadyRetried: (delay) => ({
-      en: `Already tried again after this stop: next attempt in ${delayText(delay).en}. Saving the same credentials again does not shorten the stop (other credentials or another region are tried at once).`,
-      fr: `Déjà réessayé après cet arrêt : prochain essai dans ${delayText(delay).fr}. Enregistrer de nouveau les mêmes identifiants ne raccourcit pas l’arrêt (d’autres identifiants ou une autre région sont essayés tout de suite).`,
-    }),
+    alreadyRetried: (delay, locked = false) => {
+      const others = OTHERS(locked);
+      return {
+        en: `Already tried again in this step: next attempt in ${delayText(delay).en}. Saving the configuration again does not shorten the stop (${others.en}).`,
+        fr: `Déjà réessayé dans ce palier : prochain essai dans ${delayText(delay).fr}. Enregistrer de nouveau la configuration ne raccourcit pas l’arrêt (${others.fr}).`,
+      };
+    },
     session: (delay) =>
       join(
         {

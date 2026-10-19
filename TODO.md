@@ -131,7 +131,7 @@ Publisher/ReadPublisherLatestGlucoseValues?sessionId=..&minutes=1440&maxCount=1`
 pending, f: forced, l: locked }` under a salted digest of the region and
   user name; same rules as gladys-librelinkup (context captured with the
   request, written as soon as the answer arrives whatever the generation,
-  pending attempt counted, one forced attempt per series when the
+  pending attempt counted, one forced attempt per step when the
   configuration is saved, read-back end capped by its step, any other
   failure within a series waits for the end of the step). The lock takes
   the ladder too (never a 429-like short pause): the lock lasts an unknown

@@ -148,7 +148,7 @@ connection status of the integration.
   The stop is kept in `/data`: a restart, a reconnection of Gladys and the
   test button wait too. An attempt still in flight when the integration
   stops counts as a refusal. Saving the configuration with the same
-  credentials makes **one** attempt at once per series of refusals; other
+  credentials makes **one** attempt at once per step of the stop; other
   credentials or another region are tried at once. A reading that works
   forgets the refusals.
 - **Account locked by Dexcom** (too many attempts): the same stop of

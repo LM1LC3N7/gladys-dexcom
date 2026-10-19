@@ -199,7 +199,11 @@ export class DexcomApp {
     this.floorInfo = null;
     this.discoveredKey = null;
     this.transports = new Map();
-    this.published.clear();
+    // `published` is NOT cleared here: Gladys keeps the states it accepted,
+    // and the same measurement sent again at every reconnection, test click
+    // or saved configuration would be dated again by Gladys (scenes, history
+    // duplicates). It is cleared for another account (run()) and per device
+    // by forget() (created, updated, deleted).
   }
 
   // --- The floor between two readings -----------------------------------------
@@ -251,7 +255,11 @@ export class DexcomApp {
       await this.publishKnown();
       const waiting = this.retryWait?.key === key ? this.retryWait : null;
       if (waiting) this.retryDelay = waiting.delay;
-      await this.setStatus(false, waiting?.message ?? T.status.floor(ago, next));
+      // A saved configuration whose one attempt waits for the end of the floor.
+      const message = this.forceAttempt
+        ? T.status.attemptWaits(ago, next)
+        : (waiting?.message ?? T.status.floor(ago, next));
+      await this.setStatus(false, message);
     }
     this.schedule(next, () => this.connect(generation));
   }
@@ -450,6 +458,8 @@ export class DexcomApp {
       this.lastMeasurement = new Map();
       this.lastSeen = new Map();
       this.retryWait = null;
+      // Another account: what was sent for the previous one says nothing.
+      this.published.clear();
     }
     // The session of these very credentials is kept (a reconnection to
     // Gladys never logs in again); other credentials start a new session.
@@ -477,7 +487,7 @@ export class DexcomApp {
       .digest('hex')
       .slice(0, 32);
     // A stop for these very credentials: wait for its end (1 h, 6 h, 24 h).
-    // Saving the configuration makes one attempt per series; other
+    // Saving the configuration makes one attempt per step; other
     // credentials are tried at once (the only start that may read within
     // the floor). A lock is about the account: any password of it stays in
     // the series (one attempt at once, then the next step).
@@ -517,7 +527,7 @@ export class DexcomApp {
           await this.publishKnown();
           const message =
             (force || other) && refusal.forced
-              ? T.status.alreadyRetried(until - this.now())
+              ? T.status.alreadyRetried(until - this.now(), refusal.locked)
               : T.status.stillRefused(until - this.now(), refusal.forced, refusal.locked);
           await this.setStatus(false, message);
           this.schedule(until - this.now(), () => this.retryAfterRefusal(generation));

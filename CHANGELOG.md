@@ -52,4 +52,9 @@ the notes of the version's GitHub Release.
   older than the last one, or in the future, is ignored (no age from it).
 - A lock is about the account: another password makes one attempt, then
   waits for the next step.
-- The same glucose at a new measurement is sent again (dated right).
+- The same glucose at a new measurement is sent again (dated right); the
+  same measurement is never sent again at a reconnection, a test click or
+  a saved configuration.
+- Status texts: one attempt per step of a stop; for a locked account,
+  another password waits for the next step; a saved configuration whose
+  attempt waits for the end of the 5-minute floor says so.

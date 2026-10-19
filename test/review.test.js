@@ -421,6 +421,68 @@ test('M2 locked at step 2, new passwords saved: one attempt at once, then the ne
   assert.match(gladys.fake.connectionStatus.message.en, /Already tried again/);
 });
 
+// --- Approval round (R1, R2, R4) ---------------------------------------------------
+
+test('R1 reconnections, test clicks and saves without a new measurement send no glucose again', async () => {
+  const { gladys, app, clock } = await setup();
+  const before = () =>
+    ['glucose_mgdl', 'trend', 'trend_arrow'].map((f) => sentOf(gladys, f).length);
+  assert.deepEqual(before(), [1, 1, 1]);
+  for (let i = 0; i < 3; i += 1) {
+    clock.now += 20_000;
+    gladys.emit('connected');
+    await settle(app);
+  }
+  for (let i = 0; i < 3; i += 1) await gladys.fake.action(ACTIONS.TEST);
+  await gladys.fake.configUpdated({ ...BASE_CONFIG });
+  assert.deepEqual(before(), [1, 1, 1], 'one state per measurement');
+  // A device updated in Gladys forgets its values: sent again once.
+  await gladys.fake.deviceUpdated({ ...gladys.fake.devices[0], name: 'Renamed' });
+  assert.deepEqual(before(), [2, 2, 2]);
+  // Another account: what was sent for the previous one says nothing.
+  assert.ok(app.published.size > 0);
+  await gladys.fake.configUpdated({ ...BASE_CONFIG, username: 'other@example.org' });
+  assert.equal(app.published.size, 0);
+});
+
+test('R2 a locked account: the status says another password waits for the next step', async () => {
+  const clock = { now: T0, jump: 0 };
+  const dexcom = createFakeDexcom({ now: () => clock.now });
+  dexcom.locked = true;
+  const { gladys, timers } = await setup({ dexcom, clock });
+  clock.now += HOUR;
+  await timers.run();
+  await gladys.fake.configUpdated({ ...BASE_CONFIG, password: 'other-1' });
+  await gladys.fake.configUpdated({ ...BASE_CONFIG, password: 'other-2' });
+  const { en, fr } = gladys.fake.connectionStatus.message;
+  assert.match(
+    en,
+    /another password waits for the next step; another region or another account: at once/,
+  );
+  assert.match(
+    fr,
+    /un autre mot de passe attend le palier suivant ; une autre région ou un autre compte : tout de suite/,
+  );
+});
+
+test('R4 a saved configuration whose attempt waits for the end of the floor: its own status', async () => {
+  const clock = { now: T0, jump: 0 };
+  const { gladys, dexcom, timers } = await setup({ clock, config: { password: 'wrong' } });
+  assert.deepEqual(timers.delays(), [HOUR]);
+  clock.now += MIN;
+  await gladys.fake.configUpdated({ ...BASE_CONFIG, password: 'wrong' });
+  assert.match(gladys.fake.connectionStatus.message.en, /Configuration saved: .*leaves in 4 min/);
+  assert.match(
+    gladys.fake.connectionStatus.message.fr,
+    /Configuration enregistrée : .*part donc dans 4 min/,
+  );
+  assert.equal(dexcom.requests.length, 1);
+  clock.now += 4 * MIN;
+  await timers.run();
+  assert.equal(dexcom.requests.length, 2, 'the attempt at the end of the floor');
+  assert.deepEqual(timers.delays(), [6 * HOUR]);
+});
+
 // --- M3: the same value at a new measurement is sent again -----------------------
 
 test('M3 the same glucose at every new measurement is sent again (dated right by Gladys)', async () => {
