@@ -76,8 +76,8 @@
       "type": "select",
       "label": { "en": "Refresh", "fr": "Rafraîchissement" },
       "description": {
-        "en": "How often Gladys reads Dexcom Share (one request). The sensor sends a measurement every 5 minutes: reading more often brings nothing.",
-        "fr": "Fréquence de lecture de Dexcom Share (une requête). Le capteur envoie une mesure toutes les 5 minutes : lire plus souvent n’apporte rien."
+        "en": "How often Gladys reads Dexcom Share (one request). The sensor sends a measurement every 5 minutes: reading more often brings nothing. Never more than one reading every 5 minutes, whatever starts it (test button, saved configuration, Discovery, reconnection of Gladys).",
+        "fr": "Fréquence de lecture de Dexcom Share (une requête). Le capteur envoie une mesure toutes les 5 minutes : lire plus souvent n’apporte rien. Jamais plus d’une lecture toutes les 5 minutes, quoi qui la lance (bouton de test, configuration enregistrée, Découverte, reconnexion de Gladys)."
       },
       "required": true,
       "default": "300",
@@ -126,8 +126,8 @@
       "key": "test_connection",
       "label": { "en": "Test the connection", "fr": "Tester la connexion" },
       "description": {
-        "en": "Reads Dexcom Share again and says whether the latest measurement is current. After a refusal of the credentials, this button waits for the end of the stop; saving the configuration tries the same credentials again once per series of refusals (other credentials or another region at once).",
-        "fr": "Relit Dexcom Share et indique si la dernière mesure est à jour. Après un refus des identifiants, ce bouton attend la fin de l’arrêt ; enregistrer la configuration réessaie les mêmes identifiants une fois par série de refus (d’autres identifiants ou une autre région tout de suite)."
+        "en": "Reads Dexcom Share again and says whether the latest measurement is current; read less than 5 minutes ago, it reads nothing and says when the next reading is. After a refusal of the credentials, this button waits for the end of the stop; saving the configuration tries the same credentials again once per series of refusals (other credentials or another region at once; for an account locked by Dexcom, one attempt per step whatever the password).",
+        "fr": "Relit Dexcom Share et indique si la dernière mesure est à jour ; lu il y a moins de 5 minutes, il ne relit rien et indique quand vient la prochaine lecture. Après un refus des identifiants, ce bouton attend la fin de l’arrêt ; enregistrer la configuration réessaie les mêmes identifiants une fois par série de refus (d’autres identifiants ou une autre région tout de suite ; pour un compte bloqué par Dexcom, un essai par palier quel que soit le mot de passe)."
       },
       "timeout_seconds": 60
     }

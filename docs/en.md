@@ -55,6 +55,14 @@ follower, Dexcom Share publishes nothing. The account to type in Gladys is
 - **Refresh**: every 5 minutes (the default), 10 or 15 minutes. One request
   per reading (a login now and then, when the session expires). The sensor
   sends a measurement every 5 minutes: reading more often brings nothing.
+  **Never more than one reading every 5 minutes**, whatever starts it: the
+  test button, a saved configuration, the search button of Discovery or a
+  reconnection of Gladys never read again an account read less than 5
+  minutes ago (even after a restart: the time of the last reading is kept
+  in `/data`). They publish the last reading again instead (its age and
+  currency computed again), and the next reading comes at its time. The
+  only exception: other credentials after a refusal or a lock are tried at
+  once (see "Connection problems").
 - **Measurement no longer current after**: 10, 15 (the default), 20,
   30 minutes or 1 hour. See "Current measurement or not".
 - **Glucose unit**: mg/dL (the default) or mmol/L: the unit of the glucose
@@ -94,10 +102,18 @@ or removed, phone out of range or without network, sharing off...), it **is
 never published as current**: the glucose, the trend and the arrow are not
 sent to Gladys (the device keeps its last value, with its date), only the
 **measurement age** moves, and the **status** of the integration
-(configuration page) says that the measurement is no longer current. Scenes
-may use the age (for example "age > 15") or the "Measurement too old"
-trigger. A measurement dated more than 5 minutes in the future makes the
-status ask to check the clock of Gladys.
+(configuration page) says that the measurement is no longer current. The
+currency is computed again at every publication to Gladys: an update of the
+device or a reconnection between two readings never sends a measurement
+that got too old. Scenes may use the age (for example "age > 15") or the
+"Measurement too old" trigger. A measurement dated more than 5 minutes in
+the future is not taken (no value, no age: the age goes on from the last
+measurement taken) and makes the status ask to check the clock of Gladys.
+A measurement older than the last one taken is ignored. Values 0 to 12
+(sensor error codes at Dexcom) are never glucose values.
+
+The same glucose at a new measurement is sent again: Gladys then dates it
+from that new measurement (never a "frozen" glucose dated 30 minutes ago).
 
 ## Scene triggers
 
@@ -136,8 +152,14 @@ connection status of the integration.
   credentials or another region are tried at once. A reading that works
   forgets the refusals.
 - **Account locked by Dexcom** (too many attempts): the same stop of
-  1 hour, 6 hours then 24 hours, so as not to extend the lock. Check the
-  password in the Dexcom app.
+  1 hour, 6 hours then 24 hours, so as not to extend the lock. The lock is
+  about the account: another password saved makes **one** attempt at once,
+  then waits for the next step (never back to 1 hour). Check the password
+  in the Dexcom app.
+- **Unknown error at the login** (a code the integration does not know):
+  taken as a refusal (1 hour, 6 hours, 24 hours), never as a mere pause, so
+  as not to send the password again and again. A login that works ends the
+  stop, even if the reading fails after it (a pause or a normal retry).
 - **Session refused**: Gladys opens **one** new session and reads once
   more; refused again, the reading fails and is done again later, never in
   a loop.
@@ -151,7 +173,9 @@ connection status of the integration.
   1 hour, even after a restart (the wait is kept in `/data`). The
   integration never gives up.
 - **Test the connection** reads again and says whether the latest
-  measurement is current; it never shortens a stop nor a pause.
+  measurement is current; read less than 5 minutes ago, it reads nothing
+  and answers "read N min ago... next reading in M min". It never shortens
+  a stop nor a pause.
 
 ## Privacy
 
@@ -159,7 +183,8 @@ Glucose values, trends, dates of measurements, the user name, the password,
 the account id and the session id are never written to a log nor to the
 `/data` volume of the integration. `/data` only keeps a short digest of the
 credentials (4 characters, used only to see that they changed) with the
-end of a stop, of a pause or of a wait. The session stays in memory. As
+end of a stop, of a pause or of a wait, and the time of the last reading
+(not of a measurement). The session stays in memory. As
 pydexcom does, the session id goes in the address of the reading request
 (over https): the integration never writes an address to its logs. Gladys
 keeps the last value of each feature in its database (and its backups),

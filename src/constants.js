@@ -89,8 +89,13 @@ export const GLUCOSE = Object.freeze({
   MG_PER_MMOL: 18.0156,
   /** "Low" is armed again at threshold + this, "high" at threshold - this (mg/dL). */
   HYSTERESIS_MGDL: 5,
-  /** Readings outside this range (mg/dL) are not glucose values. */
-  MIN_MGDL: 10,
+  /**
+   * Readings outside this range (mg/dL) are not glucose values. Dexcom
+   * receivers report sensor errors as values 0 to 12 (no antenna, sensor
+   * not calibrated...): never a glucose. 13 keeps the "LOW" of Dexcom (39
+   * or 40 mg/dL).
+   */
+  MIN_MGDL: 13,
   MAX_MGDL: 1000,
 });
 
@@ -122,6 +127,13 @@ export const INTERVALS = Object.freeze({
    * (never a loop: a wrong password tried again and again locks the account).
    */
   REFUSAL_STEPS_MS: Object.freeze([3600_000, 6 * 3600_000, 24 * 3600_000]),
+  /**
+   * Never two readings of one account (its /data key) closer than this,
+   * whatever the path (test button, saved configuration, Discovery,
+   * reconnection to Gladys). Only other credentials after a refusal or a
+   * lock may try at once, within the stop ladder.
+   */
+  READ_FLOOR_MS: 5 * 60_000,
 });
 
 /** Size cap of an answer read from Dexcom Share. */

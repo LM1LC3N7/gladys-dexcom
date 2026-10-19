@@ -41,6 +41,10 @@ export function reasonOf(err) {
   }
 }
 
+/** How long ago, in words: "less than 1 min" below a minute. */
+const agoText = (ms) =>
+  ms < 60_000 ? { en: 'less than 1 min', fr: 'moins d’1 min' } : delayText(ms);
+
 const RETRY = (delay) => {
   const d = delayText(delay);
   return { en: `Retried in ${d.en}.`, fr: `Nouvel essai dans ${d.fr}.` };
@@ -110,6 +114,15 @@ export const T = {
         en: `Dexcom locked the account after too many attempts. Gladys stops for ${delayText(delay).en} (1 h, then 6 h, then 24 h) so as not to lock it longer. Check the password in the Dexcom app, then save the configuration (one attempt per series of stops).`,
         fr: `Dexcom a bloqué le compte après trop d’essais. Gladys s’arrête ${delayText(delay).fr} (1 h, puis 6 h, puis 24 h) pour ne pas le bloquer plus longtemps. Vérifiez le mot de passe dans l’application Dexcom, puis enregistrez la configuration (un essai par série d’arrêts).`,
       }),
+    loginError: (delay) =>
+      join({
+        en: `Dexcom answered the login with an error this integration does not know (it may be about the credentials). So as not to lock the account, Gladys stops for ${delayText(delay).en} (1 h, then 6 h, then 24 h). Check the credentials and the region in the Dexcom app, then save the configuration (one attempt per series of stops), or report it on the Gladys forum.`,
+        fr: `Dexcom a répondu à la connexion par une erreur que cette intégration ne connaît pas (elle peut venir des identifiants). Pour ne pas bloquer le compte, Gladys s’arrête ${delayText(delay).fr} (1 h, puis 6 h, puis 24 h). Vérifiez les identifiants et la région dans l’application Dexcom, puis enregistrez la configuration (un essai par série d’arrêts), ou signalez-le sur le forum Gladys.`,
+      }),
+    floor: (ago, next) => ({
+      en: `Dexcom Share was read ${agoText(ago).en} ago (one reading every 5 minutes at most): next reading in ${delayText(next).en}.`,
+      fr: `Dexcom Share a été lu il y a ${agoText(ago).fr} (une lecture toutes les 5 minutes au plus) : prochaine lecture dans ${delayText(next).fr}.`,
+    }),
     stillRefused: (delay, forced = false, locked = false) => {
       const what = locked
         ? {
@@ -231,6 +244,11 @@ export const T = {
       ),
   },
   test: {
+    /** Within the floor of 5 minutes: what the last reading said, and when the next one is. */
+    floor: ({ state, ago, next }) => ({
+      en: `Read ${agoText(ago).en} ago (one reading every 5 minutes at most): ${state === 'current' ? 'the latest measurement is current' : 'the latest measurement is not current (see the status)'}. Next reading in ${delayText(next).en}.`,
+      fr: `Lu il y a ${agoText(ago).fr} (une lecture toutes les 5 minutes au plus) : ${state === 'current' ? 'la dernière mesure est à jour' : 'la dernière mesure n’est pas à jour (voir l’état)'}. Prochaine lecture dans ${delayText(next).fr}.`,
+    }),
     ok: ({ state }) =>
       state === 'current'
         ? {

@@ -37,8 +37,13 @@ Gladys ⇄ SDK ⇄ src/app.js (DexcomApp)
   a host from an answer.
 - **Reading** (every 5 min by default, 5 to 15 min): one
   `Publisher/ReadPublisherLatestGlucoseValues?minutes=1440&maxCount=1`.
-  The error body (`{ Code, Message }`, sent with HTTP 500) is read before
-  the status: a wrong password is a refusal, never a server error.
+  Never two readings of an account within 5 min, whatever the path (test
+  button, saved configuration, Discovery, reconnection): the start of the
+  last one is kept (monotonic in memory, wall clock in `/data`); within the
+  floor, the last reading is published again. The error body
+  (`{ Code, Message }`, sent with HTTP 500) is read before the status: a
+  wrong password is a refusal, never a server error; an unknown code of a
+  login takes the stop ladder.
 - **Current or not**: a measurement older than `stale_after` (15 min by
   default) or dated in the future publishes only its age; the status says
   so; "low" / "high" never fire from it.

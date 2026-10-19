@@ -12,16 +12,15 @@ import { fileURLToPath } from 'node:url';
 const root = fileURLToPath(new URL('../', import.meta.url));
 
 for (const zone of ['Europe/Lisbon', 'Europe/Helsinki']) {
-  test(`test/app.test.js passes with TZ=${zone}`, () => {
+  test(`test/app.test.js and test/review.test.js (around midnight) pass with TZ=${zone}`, () => {
     // A runner of its own (not a sub-test of this one).
     const env = { ...process.env, TZ: zone };
     delete env.NODE_TEST_CONTEXT;
-    const child = spawnSync(process.execPath, ['--test', 'test/app.test.js'], {
-      cwd: root,
-      env,
-      encoding: 'utf8',
-      timeout: 120_000,
-    });
+    const child = spawnSync(
+      process.execPath,
+      ['--test', 'test/app.test.js', 'test/review.test.js'],
+      { cwd: root, env, encoding: 'utf8', timeout: 120_000 },
+    );
     assert.equal(child.status, 0, `${zone}:\n${child.stdout}\n${child.stderr}`);
   });
 }

@@ -58,19 +58,24 @@ export const newSession = () => ({ accountId: null, sessionId: null });
  * pydexcom's `_handle_error_code` reads it, or null for a code it does not
  * know (the HTTP status decides then).
  */
-function classify(error, status) {
+function classify(error, status, login) {
   const { code, message } = error;
   if (code === 'SessionIdNotFound' || code === 'SessionNotValid') {
     return new DexcomError(CODES.SESSION, `Session refused (${code})`, { status, apiCode: code });
   }
-  if (code === 'AccountPasswordInvalid') {
-    return new DexcomError(CODES.REFUSED, 'Credentials refused', { status, apiCode: code });
-  }
-  if (code === 'SSO_AuthenticateMaxAttemptsExceeded') {
+  // Loose on purpose: pydexcom 0.2-0.4 matched "SSO_AuthenticateMaxAttemptsExceeed"
+  // (sic), 0.5 "...Exceeded"; which one Dexcom sends today is to check
+  // (TODO.md). A lock is never taken for a passing error.
+  if (/MaxAttempts/i.test(code)) {
     return new DexcomError(CODES.LOCKED, 'Account locked (too many attempts)', {
       status,
       apiCode: code,
     });
+  }
+  // `AccountPasswordInvalid` (0.5), `SSO_AuthenticatePasswordInvalid`,
+  // `SSO_AuthenticateAccountNotFound` (0.2), any other `SSO_Authenticate...`.
+  if (/^SSO_Authenticate/.test(code) || /PasswordInvalid|AccountNotFound/.test(code)) {
+    return new DexcomError(CODES.REFUSED, 'Credentials refused', { status, apiCode: code });
   }
   if (code === 'SSO_InternalError' && /Cannot Authenticate by Account(Name|Id)/.test(message)) {
     return new DexcomError(CODES.REFUSED, 'Credentials refused', { status, apiCode: code });
@@ -79,6 +84,15 @@ function classify(error, status) {
     // A user name, password or account id the API refuses as such: the
     // configuration must change, never tried again and again.
     return new DexcomError(CODES.REFUSED, 'Credentials refused (invalid argument)', {
+      status,
+      apiCode: code,
+    });
+  }
+  if (login) {
+    // A login answered with a code this client does not know: the password
+    // may be the cause, so it takes the stop ladder (1 h, 6 h, 24 h), never
+    // the short pause of a server error that would send it again and again.
+    return new DexcomError(CODES.LOGIN_ERROR, 'Login refused (unknown code)', {
       status,
       apiCode: code,
     });
@@ -117,6 +131,8 @@ export class DexcomClient {
     this.session = session;
     this.urlOf = urlOf;
     this.closed = false;
+    /** A login of the current latest() call worked. */
+    this.authenticated = false;
   }
 
   close() {
@@ -146,7 +162,7 @@ export class DexcomClient {
     const value = readJson(response.body ?? Buffer.alloc(0));
     const error = apiError(value);
     if (error) {
-      const known = classify(error, response.status);
+      const known = classify(error, response.status, login);
       if (known) throw known;
     }
     if (login && response.status === 401) {
@@ -193,6 +209,7 @@ export class DexcomClient {
           login: true,
         });
         session.accountId = DexcomClient.#idOf(value);
+        this.authenticated = true;
       }
     }
     const value = await this.call(ENDPOINTS.LOGIN_BY_ID, {
@@ -200,6 +217,22 @@ export class DexcomClient {
       login: true,
     });
     session.sessionId = DexcomClient.#idOf(value);
+    this.authenticated = true;
+  }
+
+  /**
+   * The latest reading, see #latest. A failure is marked `authenticated`
+   * when a login of this call worked: the credentials are fine, whatever
+   * failed after (the app then forgets a stop).
+   */
+  async latest() {
+    this.authenticated = false;
+    try {
+      return await this.#latest();
+    } catch (err) {
+      if (this.authenticated && err && typeof err === 'object') err.authenticated = true;
+      throw err;
+    }
   }
 
   /**
@@ -208,7 +241,7 @@ export class DexcomClient {
    * refused makes one login and one more try (refused again: a failure,
    * never a loop). Rejects a DexcomError.
    */
-  async latest() {
+  async #latest() {
     let fresh = false;
     if (!this.session.sessionId || !this.session.accountId) {
       await this.login();

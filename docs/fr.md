@@ -59,7 +59,15 @@ celui d’un abonné.
 - **Rafraîchissement** : toutes les 5 minutes (par défaut), 10 ou 15
   minutes. Une requête par lecture (une connexion de temps en temps, quand
   la session expire). Le capteur envoie une mesure toutes les 5 minutes :
-  lire plus souvent n’apporte rien.
+  lire plus souvent n’apporte rien. **Jamais plus d’une lecture toutes les
+  5 minutes**, quoi qui la lance : le bouton de test, une configuration
+  enregistrée, le bouton de recherche de Découverte ou une reconnexion de
+  Gladys ne relisent pas un compte lu il y a moins de 5 minutes (même après
+  un redémarrage : l’heure de la dernière lecture est gardée dans `/data`).
+  Ils republient alors la dernière lecture (son âge et son actualité
+  recalculés) et la lecture suivante vient à son heure. Seule exception :
+  d’autres identifiants après un refus ou un blocage sont essayés tout de
+  suite (voir « Problèmes de connexion »).
 - **Mesure plus à jour après** : 10, 15 (par défaut), 20, 30 minutes ou
   1 heure. Voir « Mesure à jour ou non ».
 - **Unité de glycémie** : mg/dL (par défaut) ou mmol/L : l’unité de la
@@ -105,9 +113,19 @@ retiré, téléphone hors de portée ou sans réseau, partage coupé…), elle
 flèche ne sont pas envoyées à Gladys (l’appareil garde sa dernière valeur,
 avec sa date), seul l’**âge de la mesure** avance, et l’**état** de
 l’intégration (page de configuration) dit que la mesure n’est plus à jour.
-Les scènes peuvent utiliser l’âge (par exemple « âge > 15 ») ou le
-déclencheur « Mesure trop ancienne ». Une mesure datée de plus de 5 minutes
-dans le futur fait demander de vérifier l’horloge de Gladys.
+L’actualité est recalculée à chaque envoi à Gladys : une mise à jour de
+l’appareil ou une reconnexion entre deux lectures n’envoie jamais une
+mesure devenue trop ancienne. Les scènes peuvent utiliser l’âge (par
+exemple « âge > 15 ») ou le déclencheur « Mesure trop ancienne ». Une
+mesure datée de plus de 5 minutes dans le futur n’est pas prise (ni
+valeur, ni âge : l’âge continue depuis la dernière mesure prise) et fait
+demander de vérifier l’horloge de Gladys. Une mesure plus ancienne que la
+dernière prise est ignorée. Les valeurs de 0 à 12 (codes d’erreur du
+capteur chez Dexcom) ne sont jamais des glycémies.
+
+Une même glycémie à une nouvelle mesure est envoyée de nouveau : Gladys la
+date alors de cette nouvelle mesure (jamais d’une glycémie « figée » datée
+d’il y a 30 minutes).
 
 ## Déclencheurs de scène
 
@@ -149,8 +167,15 @@ connexion de l’intégration.
   identifiants ou une autre région sont essayés tout de suite. Une lecture
   qui marche oublie les refus.
 - **Compte bloqué par Dexcom** (trop d’essais) : même arrêt de 1 heure,
-  6 heures puis 24 heures, pour ne pas prolonger le blocage. Vérifiez le
-  mot de passe dans l’application Dexcom.
+  6 heures puis 24 heures, pour ne pas prolonger le blocage. Le blocage
+  vaut pour le compte : un autre mot de passe enregistré fait **un** essai
+  tout de suite, puis attend le palier suivant (jamais de retour à
+  1 heure). Vérifiez le mot de passe dans l’application Dexcom.
+- **Erreur inconnue à la connexion** (un code que l’intégration ne connaît
+  pas) : traitée comme un refus (1 heure, 6 heures, 24 heures), jamais
+  comme une simple pause, pour ne pas envoyer le mot de passe encore et
+  encore. Une connexion qui marche met fin à l’arrêt, même si la lecture
+  échoue ensuite (pause ou nouvel essai normal).
 - **Session refusée** : Gladys ouvre **une** nouvelle session et relit une
   fois ; refusée de nouveau, la lecture échoue et sera refaite plus tard,
   jamais en boucle.
@@ -164,7 +189,9 @@ connexion de l’intégration.
   double jusqu’à 1 heure, même après un redémarrage (l’attente est gardée
   dans `/data`). L’intégration n’abandonne jamais.
 - **Tester la connexion** relit et indique si la dernière mesure est à
-  jour ; il ne raccourcit jamais un arrêt ni une pause.
+  jour ; lu il y a moins de 5 minutes, il ne relit rien et répond « lu il
+  y a N min… prochaine lecture dans M min ». Il ne raccourcit jamais un
+  arrêt ni une pause.
 
 ## Vie privée
 
@@ -173,7 +200,8 @@ d’utilisateur, le mot de passe, l’identifiant du compte et celui de la
 session ne sont jamais écrits dans un journal ni dans le volume `/data` de
 l’intégration. `/data` ne garde qu’une courte empreinte des identifiants
 (4 caractères, seulement pour voir qu’ils ont changé) avec la fin d’un
-arrêt, d’une pause ou d’une attente. La session reste en mémoire. Comme le
+arrêt, d’une pause ou d’une attente, et l’heure de la dernière lecture
+(pas celle d’une mesure). La session reste en mémoire. Comme le
 fait pydexcom, l’identifiant de session part dans l’adresse de la requête
 de lecture (en https) : l’intégration n’écrit jamais d’adresse dans ses
 journaux. Gladys garde la dernière valeur de chaque fonction dans sa base

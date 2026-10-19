@@ -33,3 +33,23 @@ the notes of the version's GitHub Release.
   1 h, then 6 h, then 24 h, kept in `/data`; HTTP 429 and 5xx pause every
   request, bounded and kept in `/data`.
 - Button "Test the connection".
+
+### Changed (review before the first release)
+
+- Never more than one reading every 5 minutes per account, whatever starts
+  it (test button, saved configuration, Discovery, reconnection, restart):
+  the last reading is published again instead, and the test button says
+  when it was read and when the next reading comes.
+- More error codes of Dexcom taken as a refusal or a lock (both spellings
+  of "MaxAttempts"); an unknown error code of a login takes the stop
+  ladder, never a short pause.
+- The age and currency of a measurement are computed again whenever states
+  are sent: a device updated between two readings never gets a value that
+  got old.
+- A login that works ends a stop even if the reading fails after it; an
+  attempt cut by a reconnection is no longer counted as a refusal.
+- Values 0 to 12 (sensor error codes) are not glucose values; a measurement
+  older than the last one, or in the future, is ignored (no age from it).
+- A lock is about the account: another password makes one attempt, then
+  waits for the next step.
+- The same glucose at a new measurement is sent again (dated right).

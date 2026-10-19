@@ -37,6 +37,10 @@ up to date at the end of every milestone.
       (`npx github:GladysAssistant/integration-store .`) was not run by the
       development agent (not allowed from its sandbox): the main session
       runs it (`C:\Users\user\devtools\validate.ps1 -Repo gladys-dexcom`).
+- [x] **Review corrections** (2026-10-19, xhigh review of `1ad682b`, refused:
+      3 blocking, 3 important, 8 minor points; the 18 hostile scenarios of
+      the reviewer are in `test/review.test.js`, turned into the behaviour
+      asked): see "Decisions" (review corrections).
 - [ ] **Milestone 2 — real account** (a tester wearing a Dexcom sensor with
       Share on and one follower): record real answers as fixtures (ids,
       values removed), fix what differs. To check first:
@@ -55,7 +59,21 @@ up to date at the end of every milestone.
   - whether the API gives `Trend` as a name (as today) everywhere, and what
     `None`, `NotComputable` and `RateOutOfRange` look like (pydexcom marks
     them "unconfirmed");
-  - whether a `text` feature (the arrow) is shown well by the Gladys front.
+  - whether a `text` feature (the arrow) is shown well by the Gladys front;
+  - the real spelling of the lock code: `SSO_AuthenticateMaxAttemptsExceeed`
+    (pydexcom 0.2-0.4) or `...Exceeded` (0.5, a linter fix of 2024?), and
+    the other `SSO_Authenticate*` codes still sent (`PasswordInvalid`,
+    `AccountNotFound` of pydexcom 0.2); every unknown code of a login
+    takes the ladder meanwhile;
+  - what LOW and HIGH look like in Share (Value 39 / 40 and 401, a flag, a
+    `Trend` of their own?), and whether the error codes 0-12 of the old
+    receivers can still come (refused as glucose: minimum 13);
+  - `DT`, `WT` and `ST`: which one is the date of the measurement (`DT` is
+    read first, as pydexcom does), whether they differ (phone and server
+    clocks), and whether a measurement can come dated ahead or older than
+    the last one (a late replica): both are ignored today;
+  - the floor of 5 min between readings against the lag of Share: a reading
+    right after a save can miss a measurement by up to 5 min.
 - [ ] **Later, if users ask** (not now): the readings of the last 24 hours
       (published with their real dates would need the core), several
       accounts, a "current" binary feature, thresholds of the user's own.
@@ -190,4 +208,46 @@ pending, f: forced, l: locked }` under a salted digest of the region and
 - `gladys_version >=5.1.0` (scene triggers). Category `services`. No
   `location: true`.
 - **Dates**: every date shown is UTC; `test/timezone.test.js` runs
-  `test/app.test.js` again with TZ=Europe/Lisbon and TZ=Europe/Helsinki.
+  `test/app.test.js` and `test/review.test.js` (around midnight UTC) again
+  with TZ=Europe/Lisbon and TZ=Europe/Helsinki.
+- **Review corrections of `1ad682b`** (they override the items above where
+  they differ):
+  - (B1) a floor of 5 min (`INTERVALS.READ_FLOOR_MS`) between two readings
+    of an account (its `/data` key), whatever the path: the start of the
+    last reading is kept before its first request (monotonic in memory,
+    wall clock in `/data` as `lastRead|<account digest>`, read back capped
+    at now). Within it, no request: Discovery, states (age and currency
+    computed again) and status from the last reading (or its failure
+    message), the next reading at its start + the poll interval; the test
+    button answers "read N min ago... next reading in M min"; the scan
+    button and the loop never read within it. Only exception: other
+    credentials after a refusal or a lock, within the ladder. A forced
+    attempt with the same credentials waits for the end of the floor;
+  - (B2) `/MaxAttempts/i` is a lock; `/^SSO_Authenticate/` and
+    `/PasswordInvalid|AccountNotFound/` a refusal; any other code (but a
+    session code) answered to a login is `LOGIN_ERROR`, a stop of the
+    ladder, never the pause of a server error;
+  - (B3) states are computed again when published (`derive()`): a value
+    that got old or is in the future is never sent again as current
+    (device created or updated, reconnection, start within the floor);
+  - (I1) the client marks `err.authenticated` when a login of the call
+    worked: the stop is forgotten and the failure takes the usual path;
+  - (I2) an attempt closed by a new start (`CLOSED`) is rewritten with
+    `pending: false` (or the stop forgotten when a login worked): never
+    one more step for it;
+  - (I3) values below 13 mg/dL are not glucose (sensor error codes 0-12);
+  - (M1) a measurement older than the last one accepted is ignored (the
+    last one stands);
+  - (M2) a lock is about the account: any password of it stays in the
+    series (one attempt at once per step, then the next step; the forced
+    attempt of a step stays used when it is refused, an automatic attempt
+    at the end of a step opens a new one);
+  - (M3) the date of the measurement is part of what tells a glucose,
+    trend or arrow changed: the same value at a new measurement is sent
+    again (`publishStates`, not `publishChangedStates`, which would drop
+    it);
+  - (M4) a measurement more than 5 min ahead is not accepted: no value, no
+    age from it (the age of the last one accepted), the clock warning;
+  - (M5) the review tests run around midnight UTC in Lisbon and Helsinki;
+  - (M6) docs aligned; (M7) `npm audit fix` (brace-expansion, dev only);
+    (M8) milestone 2 completed above.

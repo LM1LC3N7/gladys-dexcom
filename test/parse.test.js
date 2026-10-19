@@ -57,6 +57,8 @@ test('a reading: plausible values only; the newest of a list', () => {
     trend: 2,
   });
   assert.equal(parseReading(reading(ms, 5)), null, 'not a glucose value');
+  assert.equal(parseReading(reading(ms, 12)), null, 'a sensor error code of Dexcom');
+  assert.equal(parseReading(reading(ms, 13)).mgdl, 13);
   assert.equal(parseReading(reading(ms, '104')), null);
   assert.equal(parseReading(null), null);
   assert.deepEqual(parseReadings([]), { measurement: null });

@@ -105,7 +105,7 @@ const events = (gladys) =>
   gladys.fake.sceneEvents.map((e) => [e.key, e.data.threshold ?? e.data.minutes]);
 
 test('start: account id, session, latest reading; status, Discovery, values; one request per round', async () => {
-  const { gladys, dexcom, timers } = await setup();
+  const { gladys, dexcom, timers, clock } = await setup();
   assert.deepEqual(gladys.fake.connectionStatus, {
     connected: true,
     message: {
@@ -160,7 +160,9 @@ test('start: account id, session, latest reading; status, Discovery, values; one
   assert.equal(gladys.fake.sceneEvents.length, 0);
   assert.deepEqual(timers.delays(), [POLL]);
   // The next rounds: the session is kept, one request each.
+  clock.now += POLL;
   await poll(timers);
+  clock.now += POLL;
   await poll(timers);
   assert.equal(dexcom.authentications().length, 1);
   assert.equal(dexcom.logins().length, 1);
@@ -354,9 +356,10 @@ test('measurement too old: never at the first reading, once per threshold, re-ar
   await poll(timers);
   assert.deepEqual(events(gladys), [[SCENE_TRIGGERS.MEASUREMENT_STALE, '30']]);
   assert.equal(gladys.fake.sceneEvents[0].data.stale_for, 30);
-  clock.now += 2 * MIN;
+  clock.now += POLL;
   await poll(timers);
   assert.equal(gladys.fake.sceneEvents.length, 1, 'once');
+  clock.now += POLL;
   dexcom.glucose(clock.now - MIN, 112);
   await poll(timers);
   assert.equal(last(gladys, 'measurement_age'), 1);
@@ -420,8 +423,13 @@ test('refused credentials stop for 1 h, 6 h, 24 h, persisted; one forced attempt
   second.clock.now += 6 * HOUR;
   await second.timers.run();
   assert.deepEqual(second.timers.delays(), [24 * HOUR]);
-  // Saving the same credentials: one attempt at once, then never again in this series.
+  // Saving the same credentials: one attempt, at the end of the floor of
+  // 5 min (read moments ago), then never again in this series.
   await second.gladys.fake.configUpdated({ ...BASE_CONFIG, password: WRONG });
+  assert.equal(dexcom.requests.length, 3, 'never within 5 min of the last reading');
+  assert.deepEqual(second.timers.delays(), [POLL]);
+  second.clock.now += POLL;
+  await second.timers.run();
   assert.equal(dexcom.requests.length, 4);
   await second.gladys.fake.configUpdated({ ...BASE_CONFIG, password: WRONG });
   assert.equal(dexcom.requests.length, 4);
@@ -481,8 +489,9 @@ test('an attempt in flight when the app stops counts as a refusal', async () => 
 });
 
 test('a session expired: one login by account id, one more reading; refused again: a failure', async () => {
-  const { gladys, dexcom, timers } = await setup();
+  const { gladys, dexcom, timers, clock } = await setup();
   dexcom.sessions.push('expired-elsewhere');
+  clock.now += POLL;
   await poll(timers);
   assert.equal(gladys.fake.connectionStatus.connected, true);
   assert.equal(dexcom.authentications().length, 1, 'the account id is kept');
@@ -495,11 +504,13 @@ test('a session expired: one login by account id, one more reading; refused agai
     body: { Code: 'SessionNotValid', Message: 'Session not active or timed out' },
   };
   dexcom.failures.push(sessionError, { ...sessionError });
+  clock.now += POLL;
   await poll(timers);
   assert.equal(dexcom.logins().length, 3);
   assert.equal(dexcom.reads().length, 5);
   assert.match(gladys.fake.connectionStatus.message.en, /refused the session/);
   assert.deepEqual(timers.delays(), [POLL], 'not a pause of a server error, not a refusal');
+  clock.now += POLL;
   await timers.run();
   assert.equal(gladys.fake.connectionStatus.connected, true);
   assert.equal(dexcom.logins().length, 4, 'the session refused was dropped');
@@ -561,12 +572,13 @@ test('HTTP 429: a bounded pause of every path, kept across a reconnection and a 
   assert.ok(!storeText(dataDir).includes('pausedUntil'), 'forgotten after a reading that works');
 });
 
-test('5xx (with an unknown Code or none): a pause; other failures retried, doubling', async () => {
+test('5xx of the reading (an unknown Code or none): a pause; other failures retried, doubling', async () => {
   const dexcom = createFakeDexcom({ now: () => T0 });
+  const path = 'ReadPublisherLatestGlucoseValues';
   dexcom.failures.push(
-    { status: 500, body: { Code: 'SomethingNew', Message: 'x' } },
-    { status: 503, body: '<html>maintenance</html>' },
-    { status: 200, body: '<html>portal</html>' },
+    { status: 500, path, body: { Code: 'SomethingNew', Message: 'x' } },
+    { status: 503, path, body: '<html>maintenance</html>' },
+    { status: 200, path, body: '<html>portal</html>' },
   );
   const { gladys, timers } = await setup({ dexcom });
   assert.match(gladys.fake.connectionStatus.message.en, /server error \(HTTP 500/);
@@ -581,7 +593,7 @@ test('5xx (with an unknown Code or none): a pause; other failures retried, doubl
   assert.equal(gladys.fake.connectionStatus.connected, true);
 });
 
-test('a disconnection between the login and the reading: nothing in /data, read again at once', async () => {
+test('a disconnection between the login and the reading: nothing in /data, read again after the floor', async () => {
   const dataDir = mkdtempSync(join(tmpdir(), 'dexcom-app-'));
   const { gladys, dexcom, timers, app, clock } = await setup({ dataDir });
   app.session.sessionId = null;
@@ -606,13 +618,18 @@ test('a disconnection between the login and the reading: nothing in /data, read 
   assert.ok(!/retryAt|pausedUntil/.test(text), text);
   assert.doesNotMatch(text, /"refusals": \{\s*"/);
   await reconnect(gladys, app);
-  assert.equal(dexcom.reads().length, reads + 1, 'read at once');
+  assert.equal(dexcom.reads().length, reads, 'the attempt left moments ago: the floor');
+  assert.deepEqual(timers.delays(), [POLL]);
+  clock.now += POLL;
+  await timers.run();
+  assert.equal(dexcom.reads().length, reads + 1);
   assert.equal(dexcom.logins().length, logins + 1, 'the session of that login is kept');
 });
 
 test('a reconnection to Gladys sends the status and Discovery again, without a new login', async () => {
-  const { gladys, dexcom, app } = await setup();
+  const { gladys, dexcom, app, clock } = await setup();
   const discoveries = gladys.fake.bodies('POST', '/discovered_device').length;
+  clock.now += POLL;
   await reconnect(gladys, app);
   assert.equal(gladys.fake.bodies('POST', '/discovered_device').length, discoveries + 1);
   assert.equal(dexcom.logins().length, 1, 'the session is kept');
@@ -658,10 +675,11 @@ test('privacy: no health data, user name, password, id nor URL in the logs or /d
 });
 
 test('read only: a command is refused; the test button says whether the measurement is current', async () => {
-  const { gladys } = await setup();
+  const { gladys, clock } = await setup();
   const found = gladys.fake.discoveredDevices[0];
   const ack = await gladys.fake.setValue(found, found.features[0], 1);
   assert.equal(ack.success, false);
+  clock.now += POLL;
   const result = await gladys.fake.action(ACTIONS.TEST);
   assert.equal(result.success, true, result.error);
   assert.match(result.data.message.en, /Connected: the latest measurement is current/);
@@ -685,10 +703,11 @@ test('readings: the newest readable one is used; a list unreadable is a bad answ
     reading(T0 - MIN, 105, 'FortyFiveUp'),
     { Value: 'x', DT: 'nope' },
   ];
-  const { gladys, timers } = await setup({ dexcom });
+  const { gladys, timers, clock } = await setup({ dexcom });
   assert.equal(last(gladys, 'glucose_mgdl'), 105);
   assert.equal(last(gladys, 'trend_arrow'), '↗');
   dexcom.readings = { not: 'a list' };
+  clock.now += POLL;
   await poll(timers);
   assert.match(gladys.fake.connectionStatus.message.en, /unexpected way/);
 });

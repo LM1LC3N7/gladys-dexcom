@@ -14,6 +14,7 @@ export const CODES = Object.freeze({
   CLOSED: 'closed', // the client was replaced (new configuration)
   REFUSED: 'refused', // the login answered "wrong credentials" (or a wrong region)
   LOCKED: 'locked', // the account is locked for too many attempts
+  LOGIN_ERROR: 'login_error', // a login answered with an error code this client does not know
   SESSION: 'session', // the session id is unknown or expired (a login fixes it)
   REGION: 'region', // a host outside the fixed list
 });
@@ -32,8 +33,10 @@ export class DexcomError extends Error {
 
 /**
  * A stop that only the user ends (or a long wait): the credentials refused
- * (a wrong password, user name or region), or the account locked by Dexcom
- * for too many attempts. Trying a wrong password again and again locks the
- * account: the app stops for a long, growing delay (1 h, 6 h, 24 h).
+ * (a wrong password, user name or region), the account locked by Dexcom for
+ * too many attempts, or a login answered with an unknown error code.
+ * Trying a wrong password again and again locks the account: the app stops
+ * for a long, growing delay (1 h, 6 h, 24 h).
  */
-export const isStop = (err) => err?.code === CODES.REFUSED || err?.code === CODES.LOCKED;
+export const isStop = (err) =>
+  err?.code === CODES.REFUSED || err?.code === CODES.LOCKED || err?.code === CODES.LOGIN_ERROR;

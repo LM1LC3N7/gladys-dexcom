@@ -9,7 +9,8 @@
 //   - meta: `salt`, a random key generated once for the digests above,
 //     `pausedUntil|<account digest>`, the end of a pause after HTTP 429 or
 //     5xx, and `retryAt|<account digest>`, `<4 hex>|<end>|<next delay>`, the
-//     retry wait after a failed reading.
+//     retry wait after a failed reading, and `lastRead|<account digest>`,
+//     when the last reading left (the floor of 5 min between two readings).
 // Never health data (glucose, trend, date of a measurement), a user name, a
 // password, an account or session id.
 // Writes are atomic (temporary file + rename) and queued. When the file

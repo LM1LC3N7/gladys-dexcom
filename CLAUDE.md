@@ -73,7 +73,13 @@ id>` and the feature keys of `src/constants.js` (the unit is part of the
   default. The docs keep the bold warning: not a medical device, never for
   a treatment decision, alerts may be late or missing.
 - **Current or not**: a measurement older than `stale_after` (or in the
-  future) is never published as current: only its age.
+  future) is never published as current: only its age. Currency is
+  computed when states are published (`derive()`), never kept from the
+  reading.
+- **One reading per 5 min per account**, whatever the path (test button,
+  saved configuration, Discovery, reconnection, restart): see
+  `INTERVALS.READ_FLOOR_MS` and `publishFromLast()`; only other
+  credentials after a refusal or a lock may read within it.
 - **Refusals** (wrong credentials or region, account locked): the stop
   ladder (1 h, 6 h, 24 h) must never become a loop (a wrong password tried
   again and again locks the account); a session refused makes one login

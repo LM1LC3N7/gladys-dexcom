@@ -74,7 +74,6 @@ const CLOCK_JUMP_MS = 5 * 60_000;
 /** The configuration could not be read from Gladys: try again after this. */
 const CONFIG_RETRY_MS = 60_000;
 const MINUTE = 60_000;
-const DAY = 24 * 60 * MINUTE;
 /** Added to the poll interval: the gap that means "a reading missed". */
 const GAP_MARGIN_MS = 2 * MINUTE;
 /** Entries per publishTransports call (the SDK refuses more). */
@@ -88,8 +87,8 @@ const inUnit = (mgdl, unit) => {
   if (mgdl === null || mgdl === undefined) return null;
   return unit === 'mmol' ? toMmol(mgdl) : Math.round(mgdl);
 };
-/** The value of a state entry, number or text, as one comparable key. */
-const valueOf = (s) => (s.text !== undefined ? `t:${s.text}` : `s:${s.state}`);
+/** States per POST /state (the SDK refuses more). */
+const STATES_PER_CALL = 100;
 /** A failure answered by an HTTP status (not a refusal carried by a 500). */
 const httpStatus = (err) => (err?.code === CODES.HTTP ? err.status : undefined);
 
@@ -172,6 +171,15 @@ export class DexcomApp {
     this.cursors = new Map();
     /** The reading in flight: one at a time (loop, Discovery). */
     this.reading = null;
+    /**
+     * When the last reading of an account left: { baseKey, mono, wall }
+     * (memory, monotonic), also kept in /data as `lastRead|<account digest>`
+     * (wall clock, read back capped at now). No account is read twice
+     * within INTERVALS.READ_FLOOR_MS, whatever the path.
+     */
+    this.lastStart = null;
+    /** How the last reading of an account ended: { baseKey, ok } (memory). */
+    this.lastRead = null;
     this.reset();
   }
 
@@ -187,9 +195,65 @@ export class DexcomApp {
     this.devices = new Map();
     /** The measurement of the last reading is dated in the future (clock of Gladys?). */
     this.future = false;
+    /** Set when a start stayed within the floor: { ago, next } (the test button tells it). */
+    this.floorInfo = null;
     this.discoveredKey = null;
     this.transports = new Map();
     this.published.clear();
+  }
+
+  // --- The floor between two readings -----------------------------------------
+
+  /** Milliseconds since the last reading of this account left, or null (never). */
+  sinceStart(baseKey) {
+    if (!baseKey) return null;
+    if (this.lastStart?.baseKey === baseKey) {
+      return Math.max(0, this.monotonic() - this.lastStart.mono);
+    }
+    const stored = Number(this.store.get('meta', `lastRead|${baseKey}`)) || 0;
+    if (!stored) return null;
+    // A date in the future (a clock set back, a file written by hand) is now.
+    return Math.max(0, this.now() - Math.min(stored, this.now()));
+  }
+
+  /** How long before this account may be read again (0: now). */
+  floorRemaining(baseKey = this.baseKey) {
+    const since = this.sinceStart(baseKey);
+    return since === null ? 0 : Math.max(0, INTERVALS.READ_FLOOR_MS - since);
+  }
+
+  /** A reading of this account leaves now: remembered before its first request. */
+  async markStart(baseKey) {
+    if (!baseKey) return;
+    this.lastStart = { baseKey, mono: this.monotonic(), wall: this.now() };
+    await this.store.set('meta', `lastRead|${baseKey}`, String(this.now()));
+  }
+
+  /**
+   * A start within the floor: no request. Discovery, states (age and
+   * currency computed again now) and status from the last reading, and the
+   * next reading at its start + the poll interval.
+   */
+  async publishFromLast(generation, key) {
+    const base = this.baseKey;
+    const ago = this.sinceStart(base) ?? 0;
+    const next = Math.max(this.floorRemaining(base), this.pollMs() - ago, 1000);
+    this.floorInfo = { ago, next };
+    if (this.lastRead?.baseKey === base && this.lastRead.ok && this.known) {
+      for (const device of this.known.devices) this.devices.set(device.key, device);
+      this.future = this.known.future === true;
+      this.online = true;
+      await this.publishDiscovered();
+      await this.publishStates();
+      await this.publishTransports();
+      await this.setStatus(true, this.okMessage());
+    } else {
+      await this.publishKnown();
+      const waiting = this.retryWait?.key === key ? this.retryWait : null;
+      if (waiting) this.retryDelay = waiting.delay;
+      await this.setStatus(false, waiting?.message ?? T.status.floor(ago, next));
+    }
+    this.schedule(next, () => this.connect(generation));
   }
 
   /** A failure is never read again faster than the poll interval. */
@@ -414,15 +478,20 @@ export class DexcomApp {
       .slice(0, 32);
     // A stop for these very credentials: wait for its end (1 h, 6 h, 24 h).
     // Saving the configuration makes one attempt per series; other
-    // credentials are tried at once.
+    // credentials are tried at once (the only start that may read within
+    // the floor). A lock is about the account: any password of it stays in
+    // the series (one attempt at once, then the next step).
     const base = this.baseKey;
     let refusal = this.storedRefusal(base);
     const key = await this.refusalKey(config);
-    if (refusal && refusal.key !== key) {
+    let bypassFloor = false;
+    if (refusal && refusal.key !== key && !refusal.locked) {
       await this.writeRefusal(base, null);
       refusal = null;
+      bypassFloor = true;
     }
     if (refusal) {
+      const other = refusal.key !== key;
       if (refusal.pending) {
         // An attempt was in flight when the app stopped: its answer is
         // unknown, so it counts as one more refusal (never a loop).
@@ -438,15 +507,16 @@ export class DexcomApp {
         await this.writeRefusal(base, refusal);
       }
       if (this.now() < until) {
-        if (force && !refusal.forced) {
+        if ((force || other) && !refusal.forced) {
           // The one forced attempt of this series: marked used by read(),
           // when its request really leaves (never during a pause).
           this.forceAttempt = true;
+          if (other) bypassFloor = true;
         } else {
           this.blocked = true;
           await this.publishKnown();
           const message =
-            force && refusal.forced
+            (force || other) && refusal.forced
               ? T.status.alreadyRetried(until - this.now())
               : T.status.stillRefused(until - this.now(), refusal.forced, refusal.locked);
           await this.setStatus(false, message);
@@ -486,6 +556,13 @@ export class DexcomApp {
         return;
       }
       this.retryDelay = waiting.delay;
+    }
+    // Never two readings of this account within the floor (test button,
+    // saved configuration, reconnection to Gladys...), but other credentials
+    // after a refusal or a lock, within the ladder.
+    if (!bypassFloor && this.floorRemaining(base) > 0) {
+      await this.publishFromLast(generation, key);
+      return;
     }
     await this.connect(generation);
   }
@@ -577,6 +654,12 @@ export class DexcomApp {
       if (this.current(generation, epoch)) this.scheduleLoop(this.pollMs(), generation);
       return;
     }
+    const floor = this.floorRemaining();
+    if (floor > 0) {
+      // Read moments ago by another path: never twice within the floor.
+      this.scheduleLoop(floor, generation);
+      return;
+    }
     try {
       await this.refresh({ publish: false });
     } catch (err) {
@@ -612,16 +695,21 @@ export class DexcomApp {
     if (!ctx.baseKey || !this.config.username) return { kind: 'retry' };
     const key = ctx.key ?? (await this.refusalKey(this.config));
     const stored = this.storedRefusal(ctx.baseKey);
-    const forced = stored?.key === key ? stored.forced : false;
+    // The same series: these credentials, or any of a locked account.
+    const series = Boolean(stored && (stored.key === key || stored.locked));
     const now = this.now();
     if (isStop(err)) {
-      // 1 h, 6 h, then 24 h for every refusal after: never a loop.
+      // 1 h, 6 h, then 24 h for every refusal after: never a loop. The one
+      // forced attempt of a step stays used when it is the one refused; an
+      // attempt at the end of a step opens a new one.
       const step = ctx.step + 1;
       const delay = this.stepDelay(step);
       const locked = err.code === CODES.LOCKED;
+      const forced = ctx.forced === true;
       await this.writeRefusal(ctx.baseKey, { key, step, until: now + delay, forced, locked });
       return { kind: 'refused', step, delay };
     }
+    const forced = (series && stored.forced) || ctx.forced === true;
     // Only an HTTP failure pauses: a session refused comes as a 500 too.
     const status = httpStatus(err);
     let pause = null;
@@ -648,7 +736,7 @@ export class DexcomApp {
         step: ctx.step,
         until: now + delay,
         forced,
-        locked: stored?.key === key ? stored.locked : false,
+        locked: series && stored.locked,
       });
       return { kind: 'stepWait', step: ctx.step, delay };
     }
@@ -679,7 +767,9 @@ export class DexcomApp {
         const what =
           err.code === CODES.LOCKED
             ? 'Dexcom locked the account (too many attempts)'
-            : 'Credentials refused by Dexcom';
+            : err.code === CODES.LOGIN_ERROR
+              ? 'Login answered with an unknown error code'
+              : 'Credentials refused by Dexcom';
         this.logger.warn(
           `${what} (stop ${plan.step} in a row): next attempt in ${Math.round(plan.delay / MINUTE)} min`,
         );
@@ -689,6 +779,7 @@ export class DexcomApp {
       let message;
       if (plan.kind === 'stepWait') message = this.errorMessage(err, plan.delay);
       else if (err.code === CODES.LOCKED) message = T.status.locked(plan.delay);
+      else if (err.code === CODES.LOGIN_ERROR) message = T.status.loginError(plan.delay);
       else message = T.status.refused(plan.delay);
       await this.setStatus(false, message);
       this.schedule(plan.delay, () => this.retryAfterRefusal(generation));
@@ -742,6 +833,7 @@ export class DexcomApp {
     if (err.code === CODES.SESSION) return T.status.session(delay);
     if (err.code === CODES.REFUSED) return T.status.refused(delay);
     if (err.code === CODES.LOCKED) return T.status.locked(delay);
+    if (err.code === CODES.LOGIN_ERROR) return T.status.loginError(delay);
     const status = httpStatus(err);
     if (status === 429) return T.status.busy(delay);
     if (status >= 500) return T.status.serverError(status, delay);
@@ -778,17 +870,37 @@ export class DexcomApp {
   }
 
   /** Attach the context of the reading to a failure and write its outcome to /data. */
-  async fail(err, context, session) {
-    // The client was replaced: nothing Dexcom said, nothing to keep.
+  async fail(err, context, client) {
+    const session = client.session;
+    // The client was replaced: nothing Dexcom said about the reading. An
+    // attempt after a stop is no longer "in flight" (never counted as a
+    // refusal by the next start); a login that worked ends the stop.
     if (err?.code === CODES.CLOSED) {
+      if (context.step > 0) {
+        const stored = this.storedRefusal(context.baseKey);
+        if (stored?.key === context.key) {
+          await this.writeRefusal(
+            context.baseKey,
+            err.authenticated ? null : { ...stored, pending: false },
+          );
+        }
+      }
       err.plan = { kind: 'retry' };
       return err;
     }
     if (err && typeof err === 'object') {
+      this.lastRead = { baseKey: context.baseKey, ok: false };
       // Refused credentials or a locked account: the session is no longer used.
       if (isStop(err)) {
         session.accountId = null;
         session.sessionId = null;
+      } else if (err.authenticated) {
+        // A login of this reading worked: the credentials are fine, a stop
+        // is over; what failed after takes the usual path (a pause, or the
+        // poll interval), never one more step.
+        if (this.storedRefusal(context.baseKey)) await this.writeRefusal(context.baseKey, null);
+        context.step = 0;
+        if (client === this.client) this.refusalStep = 0;
       }
       err.context = context;
       // The outcome is in /data before anyone (a restart waiting for this
@@ -809,33 +921,40 @@ export class DexcomApp {
       step: this.refusalStep,
       pollMs: this.pollMs(),
       retryDelay: this.retryDelay,
+      forced: this.forceAttempt,
     };
     if (context.step > 0) {
       // An attempt after a stop: if the app stops before the answer, the
       // next start counts it as a refusal.
       const stored = this.storedRefusal(context.baseKey);
-      const same = stored?.key === context.key;
+      // The same series: these credentials, or any of a locked account.
+      const series = Boolean(stored && (stored.key === context.key || stored.locked));
       await this.writeRefusal(context.baseKey, {
         key: context.key,
         step: context.step,
-        until: same ? stored.until : this.now(),
+        until: series ? stored.until : this.now(),
         pending: true,
         // The one forced attempt of a saved configuration is used now that
         // its request leaves.
-        forced: (same && stored.forced) || this.forceAttempt,
-        locked: same && stored.locked,
+        forced: (series && stored.forced) || this.forceAttempt,
+        locked: series && stored.locked,
       });
-      this.forceAttempt = false;
     }
+    this.forceAttempt = false;
+    // The floor between two readings counts from here (before the first
+    // request, whatever its answer).
+    await this.markStart(context.baseKey);
     let result;
     try {
       result = await client.latest();
     } catch (err) {
-      throw await this.fail(err, context, client.session);
+      throw await this.fail(err, context, client);
     }
+    this.lastRead = { baseKey: context.baseKey, ok: true };
     // The credentials work: forget a stop and a pause asked earlier (even if
     // the app moved on meanwhile: the answer is true for these values).
-    if (this.storedRefusal(context.baseKey)?.key === context.key) {
+    const stored = this.storedRefusal(context.baseKey);
+    if (stored && (stored.key === context.key || stored.locked)) {
       await this.writeRefusal(context.baseKey, null);
     }
     for (const name of ['pausedUntil', 'retryAt']) {
@@ -866,45 +985,47 @@ export class DexcomApp {
     // "A new episode" means at least one reading missed: never less than the
     // stale delay, nor than the poll interval + 2 min (a slow request included).
     const gapMs = Math.max(staleMs, this.pollMs() + GAP_MARGIN_MS);
-    // A measurement dated more than a day ahead is no measurement (a phone
-    // or a sensor with a wrong clock); any measurement more than 5 min ahead
-    // is never current, and counts for the clock warning of the status.
+    // A measurement more than 5 min ahead (a phone or a sensor with a wrong
+    // clock, or the clock of Gladys late) is never accepted: no value, no
+    // age from it (the age goes on from the last one accepted), a warning in
+    // the status.
     const raw = result.measurement;
     const future = Boolean(raw && raw.timestampMs - now > FUTURE_MS);
-    const m = raw && raw.timestampMs <= now + DAY ? raw : null;
+    const previous = this.lastMeasurement.get(account.key);
+    let m = raw && !future ? raw : null;
+    if (m && previous && m.timestampMs < previous.timestampMs) {
+      // Older than the last one accepted (a late replica?): ignored, the
+      // last one accepted stands.
+      m = { mgdl: previous.mgdl, trend: previous.trend, timestampMs: previous.timestampMs };
+    }
     // Not seen for a while (readings missed): what "low" and "high" fired is
     // forgotten, a low still there is told again.
     const seen = this.lastSeen.get(account.key);
     if (seen !== undefined && mono - seen > gapMs) this.alarms.delete(account.key);
     this.lastSeen.set(account.key, mono);
-    const previous = this.lastMeasurement.get(account.key);
     if (m && m.timestampMs !== previous?.timestampMs) {
       // A gap between two measurements: a new episode.
       if (previous && Math.abs(m.timestampMs - previous.timestampMs) > gapMs) {
         this.alarms.delete(account.key);
       }
-      this.lastMeasurement.set(account.key, { timestampMs: m.timestampMs, firstSeen: mono });
+      this.lastMeasurement.set(account.key, {
+        timestampMs: m.timestampMs,
+        firstSeen: mono,
+        mgdl: m.mgdl,
+        trend: m.trend,
+      });
     }
-    const known = this.lastMeasurement.get(account.key) ?? null;
-    account.hasMeasurement = m !== null;
-    account.mgdl = m?.mgdl ?? null;
-    account.trend = m ? m.trend : null;
     // Without a measurement in this answer, the age goes on from the last
     // one accepted (never a value, never "low" nor "high" from it).
-    account.timestampMs = m?.timestampMs ?? known?.timestampMs ?? null;
-    account.firstSeen = m ? known.firstSeen : null;
-    account.age = account.timestampMs === null ? null : Math.max(0, now - account.timestampMs);
-    // Current: a measurement of this answer, not older than the stale
-    // delay, not in the future. Only then are its glucose and trend
-    // published, and may "low" or "high" fire.
-    account.current = m !== null && account.age <= staleMs && m.timestampMs - now <= FUTURE_MS;
+    account.inAnswer = m !== null;
+    Object.assign(account, this.derive(account, now));
 
     /** [trigger, account, threshold, reached]: events to fire (marked reached once sent). */
     const candidates = [];
     try {
       if (account.age !== null) {
         const created = createdKeys.has(account.key);
-        if (account.hasMeasurement) {
+        if (account.inAnswer) {
           this.checkAlarms(account, created && !jumped, mono, candidates);
         }
         this.checkStale(account, created, jumped, candidates);
@@ -917,7 +1038,7 @@ export class DexcomApp {
     this.online = true;
     this.retryDelay = this.minRetry();
     this.retryWait = null;
-    this.known = { devices: followed };
+    this.known = { devices: followed, future };
 
     const discoveredKey = JSON.stringify([this.config.unit, followed.map((d) => [d.key, d.name])]);
     if (publish || discoveredKey !== this.discoveredKey) await this.publishDiscovered();
@@ -1011,12 +1132,33 @@ export class DexcomApp {
    * 'current'; 'future' (dated ahead: clock of Gladys?); 'none' (the last
    * answer gave no measurement); 'stale' (only its age is published).
    */
-  measurementState() {
+  measurementState(t = this.now()) {
     const account = [...this.devices.values()][0];
-    if (account?.current) return 'current';
+    if (account && this.derive(account, t).current) return 'current';
     if (this.future) return 'future';
-    if (!account?.hasMeasurement) return 'none';
+    if (!account?.inAnswer) return 'none';
     return 'stale';
+  }
+
+  /**
+   * What the last measurement accepted for an account means at the time
+   * `t`: { timestampMs, mgdl, trend, firstSeen, age, current }. Computed
+   * again at every publication (a value read 14 min ago is not current any
+   * more if the stale delay is 10 min). Current: given by the last answer,
+   * not older than the stale delay, not more than 5 min ahead.
+   */
+  derive(account, t = this.now()) {
+    const last = this.lastMeasurement.get(account.key) ?? null;
+    const ts = last?.timestampMs ?? null;
+    return {
+      timestampMs: ts,
+      mgdl: last?.mgdl ?? null,
+      trend: last?.trend ?? null,
+      firstSeen: last?.firstSeen ?? null,
+      age: ts === null ? null : Math.max(0, t - ts),
+      current:
+        account.inAnswer === true && ts !== null && t - ts <= this.staleMs() && ts - t <= FUTURE_MS,
+    };
   }
 
   okMessage() {
@@ -1084,7 +1226,8 @@ export class DexcomApp {
       await this.publishDiscovered();
       return;
     }
-    if (this.online && !this.paused() && this.client) {
+    // Within the floor (read moments ago): what is known, no request.
+    if (this.online && !this.paused() && this.client && this.floorRemaining() === 0) {
       const generation = this.generation;
       const done = await this.refresh({ publish: true }).then(
         () => true,
@@ -1115,28 +1258,42 @@ export class DexcomApp {
    * waits for "Update"). A created device missing from the reading gets
    * nothing.
    */
-  statesOf() {
+  statesOf(t = this.now()) {
     const groups = { measurement: [] };
     const units = UNITS.map((unit) => [unit, glucoseFeature(unit)]);
     for (const created of this.gladys.devices ?? []) {
       const account = this.devices.get(this.keyOf(created));
-      if (!account || account.age === null) continue;
+      if (!account) continue;
+      // Age and currency at the time of publishing, never those of the
+      // reading: a value that got old is never sent again as current
+      // (Discovery "Update", a reconnection, a start within the floor).
+      const d = this.derive(account, t);
+      if (d.age === null) continue;
       const ids = deviceIds(this.gladys, account.key);
       const has = new Set((created.features ?? []).map((f) => f?.external_id));
-      const state = (key, value) =>
+      // { s: the state, k: what tells it changed }. The glucose and the
+      // trend carry the date of their measurement: the same value at a new
+      // measurement is sent again (Gladys then dates it right).
+      const entry = (key, value, at) =>
         value === null || value === undefined || !has.has(ids.feature(key))
           ? null
-          : { device_feature_external_id: ids.feature(key), state: value };
-      const text = (key, value) =>
+          : {
+              s: { device_feature_external_id: ids.feature(key), state: value },
+              k: `s:${value}${at === undefined ? '' : `@${at}`}`,
+            };
+      const text = (key, value, at) =>
         !has.has(ids.feature(key))
           ? null
-          : { device_feature_external_id: ids.feature(key), text: value };
-      const age = state(FEATURES.AGE, Math.min(1_000_000, Math.floor(account.age / MINUTE)));
-      const bundle = account.current
+          : {
+              s: { device_feature_external_id: ids.feature(key), text: value },
+              k: `t:${value}@${at}`,
+            };
+      const age = entry(FEATURES.AGE, Math.min(1_000_000, Math.floor(d.age / MINUTE)));
+      const bundle = d.current
         ? [
-            ...units.map(([unit, key]) => state(key, inUnit(account.mgdl, unit))),
-            state(FEATURES.TREND, account.trend),
-            text(FEATURES.TREND_ARROW, TREND_ARROWS[account.trend] ?? '-'),
+            ...units.map(([unit, key]) => entry(key, inUnit(d.mgdl, unit), d.timestampMs)),
+            entry(FEATURES.TREND, d.trend, d.timestampMs),
+            text(FEATURES.TREND_ARROW, TREND_ARROWS[d.trend] ?? '-', d.timestampMs),
             age,
           ]
         : [age];
@@ -1161,7 +1318,7 @@ export class DexcomApp {
    */
   async publishStates() {
     const changed = (bundle) =>
-      bundle.filter((s) => this.published.get(s.device_feature_external_id) !== valueOf(s));
+      bundle.filter((e) => this.published.get(e.s.device_feature_external_id) !== e.k);
     let room = this.budget.remaining();
     const list = [];
     let held = 0;
@@ -1188,9 +1345,13 @@ export class DexcomApp {
     if (held > 0) this.logger.debug(`${held} state(s) held back (state budget)`);
     if (list.length === 0) return;
     try {
-      const result = await this.gladys.publishChangedStates(list);
-      this.budget.record(result?.count ?? list.length);
-      for (const s of list) this.published.set(s.device_feature_external_id, valueOf(s));
+      // publishStates, not publishChangedStates: the SDK would drop the same
+      // value of a new measurement; `published` decides what changed.
+      for (let start = 0; start < list.length; start += STATES_PER_CALL) {
+        await this.gladys.publishStates(list.slice(start, start + STATES_PER_CALL).map((e) => e.s));
+      }
+      this.budget.record(list.length);
+      for (const e of list) this.published.set(e.s.device_feature_external_id, e.k);
     } catch (err) {
       // Gladys may have counted them anyway: the budget does too.
       this.budget.record(list.length);
@@ -1272,6 +1433,8 @@ export class DexcomApp {
       const message = this.lastStatus ? JSON.parse(this.lastStatus)[1] : null;
       throw new Error(message?.en ?? T.errors.notConnected);
     }
-    return T.test.ok({ state: this.measurementState() });
+    const state = this.measurementState();
+    if (this.floorInfo) return T.test.floor({ state, ...this.floorInfo });
+    return T.test.ok({ state });
   }
 }
