@@ -1,6 +1,6 @@
 {
   "name": "gladys-dexcom",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for Dexcom Share: glucose, trend and age of the measurement of the Dexcom G6, G7 and ONE+ sensors shared with Dexcom Share, read only, through the cloud of Dexcom. Not a medical device. Unofficial, not affiliated with Dexcom.",
   "type": "module",

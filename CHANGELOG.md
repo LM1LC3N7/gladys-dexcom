@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-19
+
 ### Added
 
 - First version, never tested with a real Dexcom account or sensor: the
@@ -58,3 +60,6 @@ the notes of the version's GitHub Release.
 - Status texts: one attempt per step of a stop; for a locked account,
   another password waits for the next step; a saved configuration whose
   attempt waits for the end of the 5-minute floor says so.
+
+[Unreleased]: https://github.com/LM1LC3N7/gladys-dexcom/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-dexcom/releases/tag/v0.1.1
