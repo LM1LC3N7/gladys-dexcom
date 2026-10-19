@@ -1,45 +1,34 @@
 // -----------------------------------------------------------------------------
-// Integration configuration.
-//
-// The configuration is filled in by the user in Gladys, from the `config_schema`
-// declared in `gladys-assistant-integration.json`. The SDK fetches it for you
-// (`gladys.getConfig()`) and notifies you of every change through
-// `gladys.onConfigUpdated()`.
-//
-// This module only provides defaults and normalizes the received object, so the
-// rest of the code never has to deal with `undefined`.
+// The configuration the user fills (manifest `config_schema`), normalized.
 // -----------------------------------------------------------------------------
 
-// Defaults: they MUST stay consistent with the `default` values declared in the
-// `config_schema` of the manifest.
-export const DEFAULT_CONFIG = {
-  latitude: 48.8566, // Paris
-  longitude: 2.3522,
-  unit: 'celsius', // 'celsius' | 'fahrenheit'
-  // Seconds between two reads of the polled sensors. Gladys polls at most once
-  // a minute: slower intervals are applied by skipping polls (see
-  // createPoller in src/devices/index.js).
-  poll_frequency: 300,
-  // Reserved key (NOT in config_schema): because the manifest declares both
-  // 'local' and 'cloud' in its `transports` field, Gladys shows a standard
-  // "Prefer the local connection" toggle and sends the user's choice here.
-  // Read-only for the integration; defaults to true.
-  GLADYS_PREFER_LOCAL: true,
-};
+import { POLL_INTERVALS, REGION_KEYS, STALE_AFTER, UNITS } from './constants.js';
 
-/**
- * Merge the user config with the defaults.
- * @param {Record<string, unknown>} raw config returned by the SDK
- */
+// Defaults: they MUST match the `default` values of the manifest.
+export const DEFAULTS = Object.freeze({
+  region: 'ous',
+  poll_interval: '300',
+  stale_after: '15',
+  glucose_unit: 'mgdl',
+});
+
+// eslint-disable-next-line no-control-regex
+const CONTROL = /[\u0000-\u001f\u007f]/;
+
 export function normalizeConfig(raw = {}) {
+  raw = raw ?? {};
+  const pick = (key, list) => (list.includes(String(raw[key])) ? String(raw[key]) : DEFAULTS[key]);
+  const username = typeof raw.username === 'string' ? raw.username.trim() : '';
+  // A password pasted with its line end: the line end is not part of it.
+  const password = typeof raw.password === 'string' ? raw.password.replace(/[\r\n]+$/, '') : '';
   return {
-    ...DEFAULT_CONFIG,
-    ...raw,
-    // Force the types: config may arrive as strings from a form.
-    latitude: Number(raw.latitude ?? DEFAULT_CONFIG.latitude),
-    longitude: Number(raw.longitude ?? DEFAULT_CONFIG.longitude),
-    poll_frequency: Number(raw.poll_frequency ?? DEFAULT_CONFIG.poll_frequency),
-    // The preference is a boolean; anything but an explicit false means true.
-    GLADYS_PREFER_LOCAL: raw.GLADYS_PREFER_LOCAL !== false,
+    username,
+    password,
+    usernameInvalid: username !== '' && (CONTROL.test(username) || username.length > 254),
+    passwordInvalid: password !== '' && (CONTROL.test(password) || password.length > 512),
+    region: pick('region', REGION_KEYS),
+    pollSeconds: Number(pick('poll_interval', POLL_INTERVALS)),
+    staleMinutes: Number(pick('stale_after', STALE_AFTER)),
+    unit: pick('glucose_unit', UNITS),
   };
 }

@@ -5,22 +5,28 @@ contributors.
 
 ## What this is
 
-A Gladys Assistant **external integration**: a Node.js service (Node 22+, ESM,
-no build step) that runs in its own sandboxed Docker container and talks to
+A Gladys Assistant **external integration** for Dexcom Share (the sharing of
+the Dexcom G6, G7 and ONE+ sensors): a Node.js service (Node 22+, ESM, no
+build step) that runs in its own sandboxed Docker container and talks to
 Gladys through
 [`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
-its only runtime dependency. It started from the official JavaScript template.
+its only runtime dependency. It reads the latest measurement of one Dexcom
+account (the person wearing the sensor) through the Dexcom Share API (user
+name and password, then a session id), as the pydexcom library (MIT) does;
+that library is ported, not installed. Read only, pull only. **Health data,
+and not a medical device.** See `TODO.md` for the status and every decision.
 
 ## Commands
 
 ```bash
 npm install
 npm test                                  # node --test, the built-in runner
-node --test test/devices.test.js          # one file
-node --test --test-name-pattern "plug"    # tests whose name matches
+node --test test/app.test.js              # one file
+node --test --test-name-pattern "429"     # tests whose name matches
 npm run lint                              # ESLint
 npm run format:check                      # Prettier, as the CI runs it
 npm run format                            # Prettier, fix in place
+npm run cover                             # regenerate cover.png (plain Node)
 npx github:GladysAssistant/integration-store .   # store admission checks
 ```
 
@@ -31,46 +37,65 @@ pushing.
 ## Architecture
 
 ```
-index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
-src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
-gladys-assistant-integration.json manifest: name, config_schema, actions, image...
+index.js                          SDK wiring only (src/handlers.js)
+src/handlers.js                   every SDK handler, registered before connect()
+src/app.js                        DexcomApp: start queue, loop, failures, states, triggers
+src/dexcom/client.js              the two logins (region, fixed host), the latest reading
+src/dexcom/http.js                the only network access (node:https, no redirect)
+src/dexcom/parse.js               answers -> plain values (dates, trends, error body)
+src/dexcom/errors.js              error codes; what a stop is
+src/devices.js                    the device (pure), external ids, never fewer features
+src/config.js                     DEFAULTS (mirror the manifest) + normalization
+src/store.js                      /data: stops, pauses, salt (digests only)
+src/budget.js                     sliding window of the states sent per minute
+src/i18n.js                       statuses and messages (en / fr)
+gladys-assistant-integration.json manifest
 docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
-test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
-.github/scripts/release.mjs       release helpers (manifest bump, changelog), tested in test/
+test/                             node --test, fake Gladys (SDK) + fake Dexcom Share
 ```
 
 ## Rules
 
-- **External ids are forever.** Build them with
-  `gladys.externalIds(type, platformId)`, `platformId` being the unique id the
-  platform gives the device (serial, cloud id, MAC), never a label. Gladys keys
-  devices, their history, scenes and dashboards on them: changing one creates a
-  new device and orphans the old one. The same goes for every key users store:
-  manifest `config_schema`, `actions`, widget and scene keys, feature keys.
-- **The container rootfs is read-only.** Write only under `/data`, the one
-  writable volume. Never log tokens, passwords or API keys.
+- **External ids are forever**: `account:<16 hex of SHA-256 of the account
+id>` and the feature keys of `src/constants.js` (the unit is part of the
+  glucose key). Changing the digest recipe creates a new device and orphans
+  the old one. The same goes for every key users store: manifest
+  `config_schema`, `actions`, the scene trigger keys, their fields and
+  their option values.
+- **Read only**: no request other than the two logins and the latest
+  reading, no command.
+- **Hosts**: only those of `REGIONS` (`src/constants.js`), chosen by the
+  region setting; never a host taken from an answer.
+- **Health and privacy**: never log a URL (the session id is in the query
+  of the reading), and never put a glucose value, a trend, the date of a
+  measurement, the user name, the password, the account or session id in a
+  log, an error message or `/data`. Every feature keeps no history by
+  default. The docs keep the bold warning: not a medical device, never for
+  a treatment decision, alerts may be late or missing.
+- **Current or not**: a measurement older than `stale_after` (or in the
+  future) is never published as current: only its age.
+- **Refusals** (wrong credentials or region, account locked): the stop
+  ladder (1 h, 6 h, 24 h) must never become a loop (a wrong password tried
+  again and again locks the account); a session refused makes one login
+  only. The error body `{ Code, Message }` is read before the HTTP status
+  (Dexcom answers a wrong password with a 500).
+- **Units**: only those of the core's `DEVICE_FEATURE_UNITS_BY_CATEGORY`;
+  it has no glucose unit (the unit goes in the feature name).
+- **The container rootfs is read-only.** Write only under `/data`.
 - **Versions belong to the Release workflow** (Actions → Release). Never edit
   `version` in `package.json` or in the manifest, nor the `docker_image` tag,
-  by hand — except on the README's hand-pushed tag path, which bumps all three
-  together before tagging. `test/manifest.test.js` checks they agree.
+  by hand (0.1.0 was set by hand once, before the first release).
+  `test/manifest.test.js` checks they agree.
 - **Changelog.** Every user-visible change adds a line under `## [Unreleased]`
-  in `CHANGELOG.md` (`### Added`, `Changed`, `Fixed`, `Removed`, `Security`).
-  Never write a version heading: the Release workflow moves the section, and it
-  becomes the notes of the GitHub Release.
-- **Manifest.** Texts are multi-language objects `{ "en": ..., "fr": ... }`:
-  `label`, `description` and `placeholder` alike, never a plain string. The
-  catalog `description` holds 10 to 100 characters per language. A field the
-  older cores do not know needs a higher `gladys_version` minimum
-  (`categories`: 4.86.0; `widgets`, `scene_triggers`, `scene_actions`,
-  `type: "provider"`: 5.1.0). `test/manifest.test.js` ties the manifest to the
-  code (defaults, action, scene and widget handlers): change both sides
-  together.
-- **User-facing text** is bilingual (English and French): action messages,
-  manifest texts, and `docs/en.md` / `docs/fr.md`, kept in sync.
+  in `CHANGELOG.md`. Never write a version heading.
+- **Manifest.** Texts are `{ "en": ..., "fr": ... }` objects; the catalog
+  `description` holds 10 to 100 characters per language.
+  `test/manifest.test.js` ties the manifest to the code.
+- **Encoding.** Files are UTF-8 without BOM; `test/encoding.test.js` refuses
+  mojibake in the manifest, docs, README, CHANGELOG, TODO, CLAUDE.md, the
+  notices and `src/**/*.js`. Write files with an editor, never through a
+  shell that guesses a code page.
+- **pydexcom is MIT**: its notice stays in `THIRD_PARTY_NOTICES.md`, copied
+  into the image.
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
-  in English. Tests never touch the network.
+  in English. Tests never touch the network (loopback only).
