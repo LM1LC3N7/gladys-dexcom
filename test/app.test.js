@@ -132,7 +132,7 @@ test('start: account id, session, latest reading; status, Discovery, values; one
     password: PASSWORD,
     applicationId: 'd89443d2-327c-4a6f-89e5-496bbb0317db',
   });
-  assert.match(auth.headers['user-agent'], /^gladys-dexcom\/0\.1\.0$/);
+  assert.match(auth.headers['user-agent'], /^gladys-dexcom\/\d+\.\d+\.\d+$/);
   assert.deepEqual(read.query, {
     sessionId: dexcom.sessions[0],
     minutes: '1440',

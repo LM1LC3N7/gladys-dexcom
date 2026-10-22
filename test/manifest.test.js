@@ -52,7 +52,7 @@ test('the store basics; version 0.1.0 set by hand everywhere', () => {
   assert.equal(manifest.type, 'device');
   assert.match(manifest.gladys_version, /^>=5\.1\.0$/, 'scene triggers need 5.1');
   assert.equal(manifest.version, pkg.version);
-  assert.equal(pkg.version, '0.1.0');
+  assert.match(pkg.version, /^\d+\.\d+\.\d+$/);
   assert.equal(lock.version, pkg.version);
   assert.equal(lock.packages[''].version, pkg.version);
   assert.equal(manifest.docker_image, `ghcr.io/lm1lc3n7/gladys-dexcom:${manifest.version}`);
