@@ -22,6 +22,7 @@ import {
   UNITS,
 } from '../src/constants.js';
 import { buildDevice } from '../src/devices.js';
+import { assertCoreDevice } from './helpers/coreFeature.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
 const manifest = JSON.parse(read('gladys-assistant-integration.json'));
@@ -260,4 +261,14 @@ test('features: read only, no switch, pairs and units of the core, no history; k
     }
   }
   assert.deepEqual([...all].sort(), Object.values(FEATURES).sort());
+});
+
+test('every feature has a numeric min and max and the other core fields', () => {
+  const gladys = createFakeGladys({ selector: 'dexcom' });
+  let features = 0;
+  for (const unit of ['mgdl', 'mmol']) {
+    const device = buildDevice(gladys, { key: '0123456789abcdef', name: 'Alice' }, unit);
+    features += assertCoreDevice(device, unit);
+  }
+  assert.equal(features, 2 * 4);
 });

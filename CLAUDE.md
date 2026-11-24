@@ -9,7 +9,8 @@ A Gladys Assistant **external integration** for Dexcom Share (the sharing of
 the Dexcom G6, G7 and ONE+ sensors): a Node.js service (Node 22+, ESM, no
 build step) that runs in its own sandboxed Docker container and talks to
 Gladys through
-[`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
+[`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js)
+(v0.16),
 its only runtime dependency. It reads the latest measurement of one Dexcom
 account (the person wearing the sensor) through the Dexcom Share API (user
 name and password, then a session id), as the pydexcom library (MIT) does;
@@ -20,7 +21,7 @@ and not a medical device.** See `TODO.md` for the status and every decision.
 
 ```bash
 npm install
-npm test                                  # node --test, the built-in runner
+npm test                                  # node --test --test-timeout=60000
 node --test test/app.test.js              # one file
 node --test --test-name-pattern "429"     # tests whose name matches
 npm run lint                              # ESLint
@@ -56,6 +57,12 @@ test/                             node --test, fake Gladys (SDK) + fake Dexcom S
 
 ## Rules
 
+- **Features follow the core model.** Every feature has a non-empty `name`, a
+  numeric `min` and `max` (0/0 for text), boolean `read_only` and
+  `has_feedback`: Gladys refuses it otherwise, and the SDK's fake Gladys
+  (0.16.1) too; `test/helpers/coreFeature.js` checks every device kind.
+  Devices carry `should_poll: false` (Gladys 5.3 polls a device with
+  `poll_frequency` unless it says so).
 - **External ids are forever**: `account:<16 hex of SHA-256 of the account
 id>` and the feature keys of `src/constants.js` (the unit is part of the
   glucose key). Changing the digest recipe creates a new device and orphans
