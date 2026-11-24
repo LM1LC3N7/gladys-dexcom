@@ -251,3 +251,7 @@ pending, f: forced, l: locked }` under a salted digest of the region and
   - (M5) the review tests run around midnight UTC in Lisbon and Helsinki;
   - (M6) docs aligned; (M7) `npm audit fix` (brace-expansion, dev only);
     (M8) milestone 2 completed above.
+
+## Next patch
+
+- Migration review w11 r1 minors (`_lots/migration-reviews/w11-gladys-dexcom-r1.md`): the README `npm test` line omits `--test-timeout=60000`.
